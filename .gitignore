@@ -1,6 +1,7 @@
-# 构建缓存和依赖
+# 构建缓存
 .go-install/
-deps/
+deps/gopath
+deps/go1.22.5.linux-amd64.tar.gz
 
 # 运行时数据
 data/*
