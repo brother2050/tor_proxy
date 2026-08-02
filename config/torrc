@@ -1,0 +1,18 @@
+SocksPort 9050
+DataDirectory /home/work/.openclaw/workspace/tor-proxy/data
+Log notice file /home/work/.openclaw/workspace/tor-proxy/logs/tor.log
+
+UseBridges 1
+ClientTransportPlugin snowflake exec /home/work/.openclaw/workspace/tor-proxy/obfs4proxy
+
+Bridge snowflake 192.0.2.3:80 2B280B23E1107BB62ABFC40DDCC8824814F80A72 fingerprint=2B280B23E1107BB62ABFC40DDCC8824814F80A72 url=https://snowflake-broker.torproject.net/ ice=stun:stun.antisip.com:3478,stun:stun.dus.net:3478 utls-imitate=hellorandomizedalpn
+
+# 优化描述符下载
+ConnLimit 1024
+SafeSocks 0
+TestSocks 0
+DisableDebuggerAttachment 0
+FetchDirInfoEarly 1
+FetchDirInfoExtraEarly 1
+ORPort 0
+DirPort 0

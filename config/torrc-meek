@@ -1,0 +1,15 @@
+SocksPort 9050
+DataDirectory /home/work/.openclaw/workspace/tor-proxy/data
+Log notice file /home/work/.openclaw/workspace/tor-proxy/logs/tor.log
+
+UseBridges 1
+ClientTransportPlugin meek_lite exec /home/work/.openclaw/workspace/tor-proxy/obfs4proxy
+
+Bridge meek_lite 0.0.2.0:2 url=https://ajax.aspnetcdn.com/ front=ajax.aspnetcdn.com
+
+ConnLimit 1024
+SafeSocks 0
+TestSocks 0
+DisableDebuggerAttachment 0
+ORPort 0
+DirPort 0

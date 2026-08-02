@@ -1,0 +1,14 @@
+# 构建缓存和依赖
+.go-install/
+deps/
+
+# 运行时数据
+data/*
+!data/.gitkeep
+logs/*
+!logs/.gitkeep
+
+# 临时文件
+*.pyc
+__pycache__/
+*.tmp
