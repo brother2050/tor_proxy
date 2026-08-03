@@ -4,12 +4,12 @@
 
 ## 支持平台
 
-| 平台 | 架构 | 状态 |
-|------|------|------|
-| Linux | x86_64 | ✅ 内置 |
-| macOS | x86_64 (Intel) | ✅ 自动下载 |
-| macOS | aarch64 (M1/M2/M3) | ✅ 自动下载 |
-| Windows | x86_64 | ✅ 自动下载 |
+| 平台 | 架构 | tor | obfs4proxy |
+|------|------|-----|-----------|
+| Linux | x86_64 | ✅ 内置 | ✅ 内置 |
+| macOS | x86_64 (Intel) | ✅ 内置 | ✅ 内置 |
+| macOS | aarch64 (M1/M2/M3) | ✅ 内置 | ✅ 内置 |
+| Windows | x86_64 | ✅ 内置 | ✅ 内置 |
 
 ## 快速开始
 
@@ -19,10 +19,7 @@
 git clone https://ghfast.top/https://github.com/brother2050/tor_proxy.git
 cd tor_proxy
 
-# 首次使用：下载当前平台的 Tor (自动检测)
-bash setup.sh
-
-# 启动
+# 启动 (自动检测平台，使用对应二进制)
 ./tor-start.sh start
 
 # 使用代理
@@ -36,25 +33,30 @@ export ALL_PROXY=socks5h://127.0.0.1:9050
 git clone https://ghfast.top/https://github.com/brother2050/tor_proxy.git
 cd tor_proxy
 
-# 首次使用：下载 Tor
-.\tor-start.ps1 setup
-
 # 启动
 .\tor-start.ps1 start
 ```
 
-Windows 浏览器配置：Firefox → 设置 → 网络 → SOCKS 代理 `127.0.0.1:9050`
+Windows 浏览器：Firefox → 设置 → 网络 → SOCKS 代理 `127.0.0.1:9050`
 
 ## 管理命令
 
+### Linux / macOS
 ```bash
-./tor-start.sh start     # 启动 (自动用缓存)
+./tor-start.sh start     # 启动
 ./tor-start.sh stop      # 停止
 ./tor-start.sh restart   # 重启
-./tor-start.sh status    # 状态 (显示平台信息)
-./tor-start.sh refresh   # 刷新描述符缓存
+./tor-start.sh status    # 状态
 ./tor-start.sh fresh     # 清除缓存并启动
-./tor-start.sh setup     # 下载/编译当前平台依赖
+./tor-start.sh refresh   # 刷新描述符缓存
+```
+
+### Windows
+```powershell
+.\tor-start.ps1 start     # 启动
+.\tor-start.ps1 stop      # 停止
+.\tor-start.ps1 status    # 状态
+.\tor-start.ps1 fresh     # 清除缓存并启动
 ```
 
 ## 测试结果
@@ -80,57 +82,46 @@ Windows 浏览器配置：Firefox → 设置 → 网络 → SOCKS 代理 `127.0.
 
 ```
 tor-proxy/
-├── bin/                         # 平台专属二进制
-│   ├── linux-x86_64/           # Linux x86_64
-│   │   ├── tor
-│   │   └── obfs4proxy
-│   ├── macos-x86_64/           # macOS Intel
-│   │   ├── tor
-│   │   └── obfs4proxy
-│   ├── macos-aarch64/          # macOS M1/M2/M3
-│   │   ├── tor
-│   │   └── obfs4proxy
-│   └── current -> macos-aarch64  # 当前平台符号链接
+├── bin/                         # 所有平台二进制 (即开即用)
+│   ├── linux-x86_64/           # tor + obfs4proxy + libevent
+│   ├── macos-x86_64/           # tor + obfs4proxy (Intel)
+│   ├── macos-aarch64/          # tor + obfs4proxy (Apple Silicon)
+│   ├── windows-x86_64/         # tor.exe + obfs4proxy.exe
+│   └── current -> linux-x86_64 # 当前平台符号链接
 ├── config/
-│   └── torrc.template          # 配置模板 (__DIR__ 占位符)
+│   └── torrc.template          # 配置模板
 ├── cache/
-│   └── descriptors/            # 预缓存描述符 (46MB)
+│   └── descriptors/            # 预缓存描述符 (46MB, 19888 relay)
 ├── src/
-│   └── obfs4/                  # obfs4proxy 源码
+│   └── obfs4/                  # obfs4proxy 完整源码
 ├── deps/
-│   └── go-sdk/                 # Go 1.22.5 SDK (用于重编译)
-├── setup.sh                    # 平台依赖安装脚本
-├── tor-start.sh                # 启动脚本 (自动检测平台)
-├── tor-refresh.sh              # 描述符刷新脚本
+│   └── go-sdk/                 # Go 1.22.5 SDK (重编译用)
+├── tor-start.sh                # 启动脚本 (Linux/macOS)
+├── tor-start.ps1               # 启动脚本 (Windows)
 ├── bridge-finder.py            # 桥接自动发现
 ├── tor-benchmark.py            # 速度基准测试
+├── download-all.sh             # 一键下载所有平台 Tor
 └── README.md
 ```
 
-## 首次使用流程
+## 描述符缓存
 
-1. `bash setup.sh` — 自动检测平台，下载对应 Tor 二进制
-2. `./tor-start.sh start` — 使用预缓存描述符启动 (~45秒)
-3. 代理地址: `socks5h://127.0.0.1:9050`
-
-## 描述符缓存机制
-
-预缓存 19,888 条中继描述符，首次启动也快：
-- `cache/descriptors/` — 项目内置缓存
-- `data/` — 运行时缓存 (自动同步)
-- 停止时自动保存，重启复用 (~30秒)
+预缓存 19,888 条中继描述符：
+- 首次启动 ~45 秒 (使用缓存)
+- 后续重启 ~30 秒 (复用缓存)
+- 停止时自动保存，重启自动加载
 
 ## 桥接管理
 
 ```bash
-# Snowflake (推荐 - 无需固定桥接)
+# Snowflake (推荐 - 自动发现志愿者代理)
 python3 bridge-finder.py --snowflake
 
 # 搜索所有来源
 python3 bridge-finder.py
 
-# 测试单条桥接
-python3 bridge-finder.py --test "obfs4 1.2.3.4:443 FINGERPRINT cert=xxx iat-mode=0"
+# 测试桥接
+python3 bridge-finder.py --test "obfs4 1.2.3.4:443 cert=xxx iat-mode=0"
 ```
 
 ## 浏览器配置
@@ -147,10 +138,25 @@ proxies = {'http': 'socks5h://127.0.0.1:9050', 'https': 'socks5h://127.0.0.1:905
 r = requests.get('https://www.google.com', proxies=proxies)
 ```
 
+## 更新二进制
+
+```bash
+# 下载最新版 Tor (所有平台)
+bash download-all.sh
+
+# 提交
+git add bin/
+git commit -m "update: Tor binaries"
+git push
+```
+
 ## 重新编译 obfs4proxy
 
 ```bash
-bash setup.sh  # 自动编译当前平台版本
+# 当前平台
+export GOROOT="$(pwd)/deps/go-sdk/go"
+export PATH="$GOROOT/bin:$PATH"
+cd src/obfs4 && go build -o ../../bin/$(../bin/current)/obfs4proxy ./cmd/lyrebird/
 ```
 
 ## 故障排除
