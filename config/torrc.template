@@ -1,6 +1,10 @@
-# Tor Proxy Configuration - Snowflake
-# 由 tor-start.sh 自动从模板生成，请勿手动编辑
-# 如需修改，编辑此文件后重启
+# Tor Proxy Configuration - Snowflake (优化版)
+# 由 tor-start.sh 自动生成
+#
+# 优化点:
+# - 更多 STUN 服务器 (更好的 NAT 穿透)
+# - 更激进的超时和重试
+# - 更大的并发电路数
 
 SocksPort 9050
 DataDirectory __DIR__/data
@@ -9,13 +13,28 @@ Log notice file __DIR__/logs/tor.log
 UseBridges 1
 ClientTransportPlugin snowflake exec __OBFS4PROXY__
 
-Bridge snowflake 192.0.2.3:80 2B280B23E1107BB62ABFC40DDCC8824814F80A72 fingerprint=2B280B23E1107BB62ABFC40DDCC8824814F80A72 url=https://snowflake-broker.torproject.net/ ice=stun:stun.antisip.com:3478,stun:stun.dus.net:3478 utls-imitate=hellorandomizedalpn
+# Snowflake 桥接 - 使用多个 STUN 服务器优化连接
+Bridge snowflake 192.0.2.3:80 2B280B23E1107BB62ABFC40DDCC8824814F80A72 fingerprint=2B280B23E1107BB62ABFC40DDCC8824814F80A72 url=https://snowflake-broker.torproject.net/ ice=stun:stun.antisip.com:3478,stun:stun.dus.net:3478,stun:stun.sonetel.com:3478,stun:stun.uls.co.za:3478,stun:stun.voipgate.com:3478,stun:stun.voys.nl:3478 utls-imitate=hellorandomizedalpn
 
+# 速度优化
 ConnLimit 1024
 SafeSocks 0
 TestSocks 0
 DisableDebuggerAttachment 0
 FetchDirInfoEarly 1
 FetchDirInfoExtraEarly 1
+
+# 电路优化 - 更多并发，更快超时
+NewCircuitPeriod 15
+MaxClientCircuitsPending 128
+LearnCircuitBuildTimeout 0
+CircuitBuildTimeout 20
+CircuitStreamTimeout 300
+
+# 减少开销
+ConnectionPadding 0
+KeepalivePeriod 60
+
+# 客户端模式
 ORPort 0
 DirPort 0
