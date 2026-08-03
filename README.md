@@ -9,8 +9,11 @@
 | Linux | x86_64 | ✅ 内置 |
 | macOS | x86_64 (Intel) | ✅ 自动下载 |
 | macOS | aarch64 (M1/M2/M3) | ✅ 自动下载 |
+| Windows | x86_64 | ✅ 自动下载 |
 
 ## 快速开始
+
+### Linux / macOS
 
 ```bash
 git clone https://ghfast.top/https://github.com/brother2050/tor_proxy.git
@@ -26,6 +29,21 @@ bash setup.sh
 curl --socks5-hostname 127.0.0.1:9050 https://www.google.com
 export ALL_PROXY=socks5h://127.0.0.1:9050
 ```
+
+### Windows (PowerShell)
+
+```powershell
+git clone https://ghfast.top/https://github.com/brother2050/tor_proxy.git
+cd tor_proxy
+
+# 首次使用：下载 Tor
+.\tor-start.ps1 setup
+
+# 启动
+.\tor-start.ps1 start
+```
+
+Windows 浏览器配置：Firefox → 设置 → 网络 → SOCKS 代理 `127.0.0.1:9050`
 
 ## 管理命令
 

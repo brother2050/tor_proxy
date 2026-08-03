@@ -20,12 +20,13 @@ detect_platform() {
     case "$(uname -s)" in
         Linux*)  os="linux" ;;
         Darwin*) os="macos" ;;
+        CYGWIN*|MINGW*|MSYS*) os="windows" ;;
         *)       err "Unsupported OS: $(uname -s)"; exit 1 ;;
     esac
     case "$(uname -m)" in
         x86_64|amd64)  arch="x86_64" ;;
         arm64|aarch64) arch="aarch64" ;;
-        *)             err "Unsupported arch: $(uname -m)"; exit 1 ;;
+        *)             arch="$(uname -m)" ;;
     esac
     echo "${os}-${arch}"
 }
@@ -40,7 +41,6 @@ mkdir -p "$BIN_DIR"
 TOR_VERSIONS="14.5 14.0 13.5 13.0.9"
 get_tor_urls() {
     local ver="$1"
-    local os_arch="$1"
     case "$PLATFORM" in
         linux-x86_64)
             echo "https://dist.torproject.org/torbrowser/${ver}/tor-expert-bundle-linux-x86_64-${ver}.tar.gz"
@@ -50,6 +50,10 @@ get_tor_urls() {
             ;;
         macos-aarch64)
             echo "https://dist.torproject.org/torbrowser/${ver}/tor-expert-bundle-macos-aarch64-${ver}.tar.gz"
+            ;;
+        windows-x86_64)
+            echo "https://dist.torproject.org/torbrowser/${ver}/tor-expert-bundle-windows-i686-${ver}.tar.gz"
+            echo "https://dist.torproject.org/torbrowser/${ver}/tor-expert-bundle-windows-x86_64-${ver}.tar.gz"
             ;;
     esac
 }
@@ -134,18 +138,19 @@ compile_obfs4proxy() {
     export GO111MODULE=on
     export GOPROXY=https://goproxy.cn,direct
 
-    local goos goarch
+    local goos goarch output_ext=""
     case "$PLATFORM" in
         linux-x86_64)   goos="linux"  goarch="amd64" ;;
         macos-x86_64)   goos="darwin" goarch="amd64" ;;
         macos-aarch64)  goos="darwin" goarch="arm64" ;;
+        windows-x86_64) goos="windows" goarch="amd64"; output_ext=".exe" ;;
     esac
 
     cd src/obfs4 && chmod -R u+w .
-    GOOS="$goos" GOARCH="$goarch" go build -o "$SCRIPT_DIR/$BIN_DIR/obfs4proxy" ./cmd/lyrebird/
+    GOOS="$goos" GOARCH="$goarch" go build -o "$SCRIPT_DIR/$BIN_DIR/obfs4proxy${output_ext}" ./cmd/lyrebird/
     cd "$SCRIPT_DIR"
 
-    if [ -f "$BIN_DIR/obfs4proxy" ]; then
+    if [ -f "$BIN_DIR/obfs4proxy${output_ext}" ]; then
         log "✓ obfs4proxy compiled for $PLATFORM"
         return 0
     else
