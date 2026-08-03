@@ -1,15 +1,19 @@
 # 构建缓存
 .go-install/
-deps/gopath
+deps/gopath/
 deps/go1.22.5.linux-amd64.tar.gz
 
-# 运行时数据
+# 运行时
 data/*
 !data/.gitkeep
 logs/*
 !logs/.gitkeep
 
-# 临时文件
+# 生成的配置 (从模板生成)
+config/torrc
+config/torrc-bridge
+
+# 临时
 *.pyc
 __pycache__/
 *.tmp

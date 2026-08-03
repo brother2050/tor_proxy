@@ -1,33 +1,31 @@
 #!/bin/bash
-# deploy.sh - Package tor-proxy for deployment
-# Usage: bash deploy.sh
-# Creates tor-proxy.tar.gz ready to deploy anywhere
-
-set -e
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# deploy.sh - 打包项目用于分发
+# ==============================
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
 echo "Packaging tor-proxy..."
 
-# Clean up
+# 清理
 rm -rf data/* logs/* 2>/dev/null
 
-# Create package
+# 打包 (排除构建缓存)
 tar czf ../tor-proxy.tar.gz \
-    tor \
-    libevent-2.1.so.7 \
-    libevent-2.1.so.7.0.1 \
-    tor-proxy.sh \
-    tor-proxy.py \
-    tor-benchmark.py \
-    config/torrc \
-    README.md \
-    --transform 's,^,tor-proxy/,'
+    --exclude='.git' \
+    --exclude='.go-install' \
+    --exclude='deps/go-sdk' \
+    --exclude='deps/go1.22.5.*' \
+    --exclude='deps/gopath' \
+    --exclude='data/*' \
+    --exclude='logs/*' \
+    --exclude='*.tar.gz' \
+    --transform 's,^,tor-proxy/,' \
+    .
 
 echo "✓ Created tor-proxy.tar.gz"
 echo ""
-echo "Deploy on target machine:"
+echo "Deploy:"
 echo "  tar xzf tor-proxy.tar.gz"
 echo "  cd tor-proxy"
-echo "  ./tor-proxy.sh start"
-echo "  ./tor-proxy.sh test"
+echo "  bash setup.sh        # 下载当前平台 Tor"
+echo "  ./tor-start.sh start  # 启动"

@@ -1,7 +1,7 @@
 #!/bin/bash
 # tor-start.sh - 启动 Tor 代理
 # =============================
-# 自动从模板生成配置，使用相对路径，可放在任意目录
+# 自动检测平台，从模板生成配置，支持 Linux/macOS
 #
 # 用法:
 #   ./tor-start.sh          # 启动
@@ -10,13 +10,54 @@
 #   ./tor-start.sh status   # 状态
 #   ./tor-start.sh fresh    # 清除缓存并启动
 #   ./tor-start.sh refresh  # 刷新描述符缓存
+#   ./tor-start.sh setup    # 下载当前平台依赖
 
-# 获取脚本所在目录 (支持任意路径、含空格等)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# 组件路径
-TOR_BIN="$SCRIPT_DIR/tor"
-OBFS4PROXY="$SCRIPT_DIR/obfs4proxy"
+# 自动检测平台
+detect_platform() {
+    local os arch
+    case "$(uname -s)" in
+        Linux*)  os="linux" ;;
+        Darwin*) os="macos" ;;
+        CYGWIN*|MINGW*|MSYS*) os="windows" ;;
+        *)       echo "unknown" ; return ;;
+    esac
+    case "$(uname -m)" in
+        x86_64|amd64)  arch="x86_64" ;;
+        arm64|aarch64) arch="aarch64" ;;
+        *)             arch="$(uname -m)" ;;
+    esac
+    echo "${os}-${arch}"
+}
+
+PLATFORM=$(detect_platform)
+BIN_DIR="$SCRIPT_DIR/bin/$PLATFORM"
+
+# 查找 Tor 二进制
+find_tor() {
+    # 1. 平台专属目录
+    [ -x "$BIN_DIR/tor" ] && echo "$BIN_DIR/tor" && return
+    # 2. bin/current 符号链接
+    [ -x "$SCRIPT_DIR/bin/current/tor" ] && echo "$SCRIPT_DIR/bin/current/tor" && return
+    # 3. 根目录 (Linux 默认)
+    [ -x "$SCRIPT_DIR/tor" ] && echo "$SCRIPT_DIR/tor" && return
+    # 4. PATH
+    command -v tor 2>/dev/null && return
+    echo ""
+}
+
+# 查找 obfs4proxy
+find_obfs4proxy() {
+    [ -x "$BIN_DIR/obfs4proxy" ] && echo "$BIN_DIR/obfs4proxy" && return
+    [ -x "$SCRIPT_DIR/bin/current/obfs4proxy" ] && echo "$SCRIPT_DIR/bin/current/obfs4proxy" && return
+    [ -x "$SCRIPT_DIR/obfs4proxy" ] && echo "$SCRIPT_DIR/obfs4proxy" && return
+    command -v obfs4proxy 2>/dev/null && return
+    echo ""
+}
+
+TOR_BIN=$(find_tor)
+OBFS4PROXY=$(find_obfs4proxy)
 DATA_DIR="$SCRIPT_DIR/data"
 LOGS_DIR="$SCRIPT_DIR/logs"
 CACHE_DIR="$SCRIPT_DIR/cache/descriptors"
@@ -25,7 +66,11 @@ CONFIG="$SCRIPT_DIR/config/torrc"
 PID_FILE="$DATA_DIR/tor.pid"
 SOCKS_PORT=9050
 
-export LD_LIBRARY_PATH="$SCRIPT_DIR"
+# macOS 需要设置动态库路径
+if [ -d "$BIN_DIR" ]; then
+    export DYLD_LIBRARY_PATH="$BIN_DIR:${DYLD_LIBRARY_PATH:-}"
+    export LD_LIBRARY_PATH="$BIN_DIR:${LD_LIBRARY_PATH:-}"
+fi
 
 # 颜色
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
@@ -33,17 +78,32 @@ log() { echo -e "${GREEN}[tor]${NC} $*"; }
 warn() { echo -e "${YELLOW}[tor]${NC} $*"; }
 info() { echo -e "${CYAN}[tor]${NC} $*"; }
 
-# 从模板生成 torrc (替换 __DIR__ 为实际目录)
-generate_config() {
-    if [ ! -f "$CONFIG_TEMPLATE" ]; then
-        warn "Template not found: $CONFIG_TEMPLATE"
-        return 1
+# 检查依赖
+check_deps() {
+    local missing=0
+    if [ -z "$TOR_BIN" ]; then
+        err "Tor binary not found for platform: $PLATFORM"
+        echo "  Run: ./setup.sh  or  ./tor-start.sh setup"
+        missing=1
     fi
-    # 转义路径中的特殊字符 (用于 sed)
-    local escaped_dir
+    if [ -z "$OBFS4PROXY" ]; then
+        warn "obfs4proxy not found (Snowflake may not work)"
+        echo "  Run: ./setup.sh  or  ./tor-start.sh setup"
+    fi
+    [ $missing -eq 1 ] && return 1
+    return 0
+}
+
+# 从模板生成 torrc
+generate_config() {
+    [ ! -f "$CONFIG_TEMPLATE" ] && { warn "Template not found: $CONFIG_TEMPLATE"; return 1; }
+    local escaped_dir escaped_obfs4
     escaped_dir=$(printf '%s\n' "$SCRIPT_DIR" | sed 's/[[\.*^$()+?{|/]/\\&/g')
-    sed "s|__DIR__|${escaped_dir}|g" "$CONFIG_TEMPLATE" > "$CONFIG"
-    info "Generated config: $CONFIG"
+    escaped_obfs4=$(printf '%s\n' "$OBFS4PROXY" | sed 's/[[\.*^$()+?{|/]/\\&/g')
+
+    sed -e "s|__DIR__|${escaped_dir}|g" \
+        -e "s|__OBFS4PROXY__|${escaped_obfs4}|g" \
+        "$CONFIG_TEMPLATE" > "$CONFIG"
 }
 
 get_pid() { [ -f "$PID_FILE" ] && cat "$PID_FILE" 2>/dev/null; }
@@ -58,7 +118,7 @@ deploy_cache() {
         warn "No pre-cached descriptors found"
         return 1
     fi
-    local cache_size=$(du -sh "$CACHE_DIR" | awk '{print $1}')
+    local cache_size=$(du -sh "$CACHE_DIR" 2>/dev/null | awk '{print $1}')
     local relay_count=$(grep -c "onion-key" "$CACHE_DIR/cached-microdescs" 2>/dev/null || echo 0)
     info "Deploying cached descriptors ($cache_size, $relay_count relays)..."
     mkdir -p "$DATA_DIR"
@@ -73,8 +133,8 @@ sync_to_cache() {
     local synced=0
     for f in cached-certs cached-microdesc-consensus cached-microdescs; do
         if [ -f "$DATA_DIR/$f" ]; then
-            local src_size=$(stat -c%s "$DATA_DIR/$f" 2>/dev/null || echo 0)
-            local dst_size=$(stat -c%s "$CACHE_DIR/$f" 2>/dev/null || echo 0)
+            local src_size=$(stat -c%s "$DATA_DIR/$f" 2>/dev/null || stat -f%z "$DATA_DIR/$f" 2>/dev/null || echo 0)
+            local dst_size=$(stat -c%s "$CACHE_DIR/$f" 2>/dev/null || stat -f%z "$CACHE_DIR/$f" 2>/dev/null || echo 0)
             if [ "$src_size" -gt 0 ] && [ "$src_size" -gt "$dst_size" ] 2>/dev/null; then
                 cp "$DATA_DIR/$f" "$CACHE_DIR/$f"
                 synced=$((synced + 1))
@@ -105,7 +165,7 @@ do_start() {
         return 0
     fi
 
-    # 生成配置
+    check_deps || return 1
     generate_config || return 1
 
     mkdir -p "$DATA_DIR" "$LOGS_DIR"
@@ -118,18 +178,15 @@ do_start() {
     else
         local valid_until=$(grep "valid-until" "$DATA_DIR/cached-microdesc-consensus" 2>/dev/null | awk '{print $2, $3}')
         if [ -n "$valid_until" ]; then
-            local until_ts=$(date -d "$valid_until" +%s 2>/dev/null)
+            local until_ts=$(date -d "$valid_until" +%s 2>/dev/null || date -jf "%Y-%m-%d %H:%M:%S" "$valid_until" +%s 2>/dev/null)
             local now_ts=$(date +%s)
             local remaining=$(( (until_ts - now_ts) / 60 ))
-            if [ "$remaining" -lt 30 ]; then
-                info "Consensus expired (${remaining}min remaining)"
-                need_cache=true
-            fi
+            [ "$remaining" -lt 30 ] && need_cache=true
         fi
     fi
     $need_cache && deploy_cache
 
-    log "Starting Tor..."
+    log "Starting Tor ($PLATFORM)..."
     nohup "$TOR_BIN" -f "$CONFIG" </dev/null >"$LOGS_DIR/startup.log" 2>&1 &
     local pid=$!
     echo "$pid" > "$PID_FILE"
@@ -144,7 +201,7 @@ do_start() {
             return 1
         fi
         if [ -f "$LOGS_DIR/tor.log" ]; then
-            local pct=$(grep -oP 'Bootstrapped \K\d+' "$LOGS_DIR/tor.log" 2>/dev/null | tail -1)
+            local pct=$(grep -oP 'Bootstrapped \K\d+' "$LOGS_DIR/tor.log" 2>/dev/null || grep -o 'Bootstrapped [0-9]*%' "$LOGS_DIR/tor.log" 2>/dev/null | tail -1 | grep -o '[0-9]*')
             if [ "$pct" = "100" ]; then
                 local elapsed=$(($(date +%s) - start_time))
                 echo ""
@@ -182,8 +239,16 @@ do_refresh() {
     fi
 }
 
+do_setup() {
+    bash "$SCRIPT_DIR/setup.sh"
+}
+
 do_status() {
     echo -e "${CYAN}=== Tor Proxy Status ===${NC}"
+    echo "  Platform: $PLATFORM"
+    echo "  Tor: ${TOR_BIN:-NOT FOUND}"
+    echo "  obfs4proxy: ${OBFS4PROXY:-NOT FOUND}"
+    echo ""
     if is_running; then
         log "Running (PID: $(get_pid))"
     else
@@ -195,11 +260,7 @@ do_status() {
     if [ -f "$CACHE_DIR/cached-microdesc-consensus" ]; then
         local cache_size=$(du -sh "$CACHE_DIR" | awk '{print $1}')
         local relay_count=$(grep -c "onion-key" "$CACHE_DIR/cached-microdescs" 2>/dev/null || echo 0)
-        local valid_until=$(grep "valid-until" "$CACHE_DIR/cached-microdesc-consensus" | awk '{print $2, $3}')
-        local until_ts=$(date -d "$valid_until" +%s 2>/dev/null)
-        local now_ts=$(date +%s)
-        local remaining=$(( (until_ts - now_ts) / 60 ))
-        echo "  Size: $cache_size | Relays: $relay_count | Valid: ${remaining}min"
+        echo "  Size: $cache_size | Relays: $relay_count"
     else
         echo "  No cache"
     fi
@@ -211,6 +272,7 @@ case "${1:-start}" in
     restart) do_restart ;;
     fresh)   do_fresh ;;
     refresh) do_refresh ;;
+    setup)   do_setup ;;
     status)  do_status ;;
-    *)       echo "Usage: $0 {start|stop|restart|fresh|refresh|status}" ;;
+    *)       echo "Usage: $0 {start|stop|restart|fresh|refresh|setup|status}" ;;
 esac
