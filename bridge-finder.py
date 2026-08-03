@@ -39,6 +39,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 # ============================================================
 
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
+TORRC_TEMPLATE = os.path.join(PROJECT_DIR, "config", "torrc.template")
 TORRC_PATH = os.path.join(PROJECT_DIR, "config", "torrc")
 TOR_BIN = os.path.join(PROJECT_DIR, "tor")
 OBFS4PROXY = os.path.join(PROJECT_DIR, "obfs4proxy")
@@ -482,43 +483,32 @@ def test_bridges_parallel(bridges, max_workers=MAX_WORKERS):
 # ============================================================
 
 def generate_torrc(bridges, use_all=False):
-    """生成 torrc 配置"""
-    lines = [
-        "SocksPort 9050",
-        f"DataDirectory {DATA_DIR}",
-        f"Log notice file {LOGS_DIR}/tor.log",
-        "",
-        "UseBridges 1",
-    ]
-
+    """生成 torrc 配置 (使用模板，保持相对路径)"""
     # 收集所有需要的 transport
     transports = set()
     for b in bridges:
         transports.add(b["type"])
 
-    # ClientTransportPlugin 行
     plugins = []
     for t in sorted(transports):
-        if t == "snowflake":
-            plugins.append(f"snowflake exec {OBFS4PROXY}")
-        elif t == "obfs4":
-            plugins.append(f"obfs4 exec {OBFS4PROXY}")
-        elif t == "meek_lite":
-            plugins.append(f"meek_lite exec {OBFS4PROXY}")
-        elif t == "webtunnel":
-            plugins.append(f"webtunnel exec {OBFS4PROXY}")
+        plugins.append(f"{t} exec __DIR__/obfs4proxy")
 
-    lines.append(f"ClientTransportPlugin {' '.join(plugins)}")
-
-    # Bridge 行
-    lines.append("")
+    bridge_lines = []
     count = 0
     for b in bridges:
-        if use_all or count < 5:  # 默认最多5条
-            lines.append(f"Bridge {b['raw']}")
+        if use_all or count < 5:
+            bridge_lines.append(f"Bridge {b['raw']}")
             count += 1
 
-    lines.extend([
+    lines = [
+        "SocksPort 9050",
+        "DataDirectory __DIR__/data",
+        "Log notice file __DIR__/logs/tor.log",
+        "",
+        "UseBridges 1",
+        f"ClientTransportPlugin {' '.join(plugins)}",
+        "",
+    ] + bridge_lines + [
         "",
         "ConnLimit 1024",
         "SafeSocks 0",
@@ -526,23 +516,24 @@ def generate_torrc(bridges, use_all=False):
         "DisableDebuggerAttachment 0",
         "ORPort 0",
         "DirPort 0",
-    ])
-
+    ]
     return "\n".join(lines)
 
 
 def generate_snowflake_torrc():
-    """生成 Snowflake 专用配置 (不依赖固定桥接)"""
+    """生成 Snowflake 配置 (使用模板)"""
+    if os.path.exists(TORRC_TEMPLATE):
+        with open(TORRC_TEMPLATE) as f:
+            return f.read()
+    # fallback
     stun_list = ",".join(STUN_SERVERS)
     return f"""SocksPort 9050
-DataDirectory {DATA_DIR}
-Log notice file {LOGS_DIR}/tor.log
+DataDirectory __DIR__/data
+Log notice file __DIR__/logs/tor.log
 
 UseBridges 1
-ClientTransportPlugin snowflake exec {OBFS4PROXY}
+ClientTransportPlugin snowflake exec __DIR__/obfs4proxy
 
-# Snowflake - 自动发现志愿者代理
-# 不依赖固定桥接地址，由 Tor 项目 broker 动态分配
 Bridge snowflake 192.0.2.3:80 2B280B23E1107BB62ABFC40DDCC8824814F80A72 fingerprint=2B280B23E1107BB62ABFC40DDCC8824814F80A72 url=https://snowflake-broker.torproject.net/ ice={stun_list} utls-imitate=hellorandomizedalpn
 
 ConnLimit 1024
@@ -586,17 +577,22 @@ def main():
         print(f"结果: {'✓ 可用' if ok else '✗ 不可用'} - {msg}")
         sys.exit(0 if ok else 1)
 
+    # 写入配置文件 (替换 __DIR__)
+    def write_torrc(content, output_path):
+        resolved = content.replace("__DIR__", PROJECT_DIR)
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        with open(output_path, "w") as f:
+            f.write(resolved)
+        print(f"✓ 配置已写入: {output_path}")
+
     # Snowflake 配置 (推荐 - 不依赖固定桥接)
     if args.snowflake:
         print("生成 Snowflake 配置 (自动发现志愿者代理，无需固定桥接)...")
         torrc = generate_snowflake_torrc()
-        os.makedirs(os.path.dirname(args.output), exist_ok=True)
-        with open(args.output, "w") as f:
-            f.write(torrc)
-        print(f"✓ 配置已写入: {args.output}")
+        write_torrc(torrc, args.output)
         print()
         print("启动:")
-        print(f"  LD_LIBRARY_PATH={PROJECT_DIR} {TOR_BIN} -f {args.output}")
+        print(f"  cd {PROJECT_DIR} && ./tor-start.sh start")
         sys.exit(0)
 
     # 发现桥接
@@ -635,12 +631,9 @@ def main():
     print(f"\n✓ 找到 {len(working)} 条可用桥接")
 
     # 生成配置
-    if args.apply or True:  # 总是生成
+    if args.apply or True:
         torrc = generate_torrc(working)
-        os.makedirs(os.path.dirname(args.output), exist_ok=True)
-        with open(args.output, "w") as f:
-            f.write(torrc)
-        print(f"\n✓ 配置已写入: {args.output}")
+        write_torrc(torrc, args.output)
         print(f"  包含 {min(len(working), 5)} 条桥接")
 
     # 显示可用桥接
