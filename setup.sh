@@ -4,6 +4,10 @@
 # 首次使用前运行此脚本，自动下载当前平台的依赖
 #
 # 用法: bash setup.sh
+#
+# 环境变量:
+#   TOR_MIRROR  - 自定义镜像地址 (如: https://ghfast.top/https://github.com/xxx)
+#   TOR_VERSION - 指定 Tor 版本 (如: 14.5)
 
 set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -38,109 +42,252 @@ log "Platform: $PLATFORM"
 BIN_DIR="bin/$PLATFORM"
 mkdir -p "$BIN_DIR"
 
-# Tor 下载地址 (多版本尝试)
-TOR_VERSIONS="14.5 14.0 13.5 13.0.9"
-get_tor_urls() {
+# ============================================================
+# 下载源配置 (多镜像 + 国内加速)
+# ============================================================
+
+# Tor 版本列表 (从新到旧尝试)
+TOR_VERSIONS="${TOR_VERSION:-14.5 14.0 13.5 13.0.9}"
+
+# 官方源
+OFFICIAL_BASE="https://dist.torproject.org/torbrowser"
+
+# 国内镜像源 (按优先级排序)
+# ghfast.top 可加速 GitHub release 等
+# 如有其他镜像可自行添加
+MIRROR_SOURCES=(
+    ""  # 空字符串表示使用官方源
+    "https://ghfast.top/https://github.com/nickmolo/tor-expert-bundle/releases/download"
+    "https://ghproxy.com/https://github.com/nickmolo/tor-expert-bundle/releases/download"
+)
+
+# 构建下载 URL 列表
+get_download_urls() {
     local ver="$1"
+    local urls=()
+
+    # 官方源 (每个版本)
     case "$PLATFORM" in
         linux-x86_64)
-            echo "https://dist.torproject.org/torbrowser/${ver}/tor-expert-bundle-linux-x86_64-${ver}.tar.gz"
+            urls+=("${OFFICIAL_BASE}/${ver}/tor-expert-bundle-linux-x86_64-${ver}.tar.gz")
             ;;
         macos-x86_64)
-            echo "https://dist.torproject.org/torbrowser/${ver}/tor-expert-bundle-macos-x86_64-${ver}.tar.gz"
+            urls+=("${OFFICIAL_BASE}/${ver}/tor-expert-bundle-macos-x86_64-${ver}.tar.gz")
             ;;
         macos-aarch64)
-            echo "https://dist.torproject.org/torbrowser/${ver}/tor-expert-bundle-macos-aarch64-${ver}.tar.gz"
+            urls+=("${OFFICIAL_BASE}/${ver}/tor-expert-bundle-macos-aarch64-${ver}.tar.gz")
             ;;
         windows-x86_64)
-            echo "https://dist.torproject.org/torbrowser/${ver}/tor-expert-bundle-windows-i686-${ver}.tar.gz"
-            echo "https://dist.torproject.org/torbrowser/${ver}/tor-expert-bundle-windows-x86_64-${ver}.tar.gz"
+            urls+=("${OFFICIAL_BASE}/${ver}/tor-expert-bundle-windows-x86_64-${ver}.tar.gz")
+            urls+=("${OFFICIAL_BASE}/${ver}/tor-expert-bundle-windows-i686-${ver}.tar.gz")
             ;;
     esac
-}
 
-# 下载 Tor
-download_tor() {
-    if [ -f "$BIN_DIR/tor" ] && [ -x "$BIN_DIR/tor" ]; then
-        log "Tor already exists: $BIN_DIR/tor"
-        return 0
-    fi
-
-    log "Downloading Tor for $PLATFORM..."
-
-    for ver in $TOR_VERSIONS; do
-        local url=$(get_tor_urls "$ver")
-        local tmpfile="/tmp/tor-${PLATFORM}-${ver}.tar.gz"
-
-        log "  Trying v${ver}..."
-        if curl -sL --connect-timeout 15 --max-time 120 "$url" -o "$tmpfile" 2>/dev/null; then
-            if [ -f "$tmpfile" ] && [ -s "$tmpfile" ]; then
-                log "  Extracting..."
-                local extdir="/tmp/tor-extract-${PLATFORM}"
-                rm -rf "$extdir" && mkdir -p "$extdir"
-                tar xzf "$tmpfile" -C "$extdir" 2>/dev/null
-
-                # 查找 tor 二进制 (可能在不同子目录)
-                local tor_bin=$(find "$extdir" -name "tor" -type f -perm +111 2>/dev/null | head -1)
-                if [ -n "$tor_bin" ]; then
-                    cp "$tor_bin" "$BIN_DIR/tor"
-                    chmod +x "$BIN_DIR/tor"
-
-                    # 复制 obfs4proxy (如果存在)
-                    local obfs4_bin=$(find "$extdir" -name "obfs4proxy" -type f -perm +111 2>/dev/null | head -1)
-                    if [ -n "$obfs4_bin" ]; then
-                        cp "$obfs4_bin" "$BIN_DIR/obfs4proxy"
-                        chmod +x "$BIN_DIR/obfs4proxy"
-                        log "  ✓ obfs4proxy also found"
-                    fi
-
-                    # 复制 snowflake-client (如果存在)
-                    local sf_bin=$(find "$extdir" -name "snowflake-client" -type f -perm +111 2>/dev/null | head -1)
-                    if [ -n "$sf_bin" ]; then
-                        cp "$sf_bin" "$BIN_DIR/snowflake-client"
-                        chmod +x "$BIN_DIR/snowflake-client"
-                        log "  ✓ snowflake-client also found"
-                    fi
-
-                    # macOS: 移除 Gatekeeper 隔离标记 (否则二进制可能被阻止运行)
-                    if [ "${PLATFORM%%-*}" = "macos" ]; then
-                        xattr -d com.apple.quarantine "$BIN_DIR/tor" 2>/dev/null || true
-                        [ -f "$BIN_DIR/obfs4proxy" ] && xattr -d com.apple.quarantine "$BIN_DIR/obfs4proxy" 2>/dev/null || true
-                        [ -f "$BIN_DIR/snowflake-client" ] && xattr -d com.apple.quarantine "$BIN_DIR/snowflake-client" 2>/dev/null || true
-                        log "  ✓ macOS quarantine 标记已移除"
-                    fi
-
-                    rm -rf "$extdir" "$tmpfile"
-                    log "  ✓ Tor v${ver} installed to $BIN_DIR/tor"
-                    return 0
-                fi
-                rm -rf "$extdir"
-            fi
-        fi
-        rm -f "$tmpfile"
+    # 镜像源 (如果有 GitHub release 镜像)
+    for mirror in "${MIRROR_SOURCES[@]}"; do
+        [ -z "$mirror" ] && continue
+        case "$PLATFORM" in
+            linux-x86_64)
+                urls+=("${mirror}/tor-expert-bundle-${ver}/tor-expert-bundle-linux-x86_64-${ver}.tar.gz")
+                ;;
+            macos-x86_64)
+                urls+=("${mirror}/tor-expert-bundle-${ver}/tor-expert-bundle-macos-x86_64-${ver}.tar.gz")
+                ;;
+            macos-aarch64)
+                urls+=("${mirror}/tor-expert-bundle-${ver}/tor-expert-bundle-macos-aarch64-${ver}.tar.gz")
+                ;;
+            windows-x86_64)
+                urls+=("${mirror}/tor-expert-bundle-${ver}/tor-expert-bundle-windows-x86_64-${ver}.tar.gz")
+                ;;
+        esac
     done
 
-    err "Failed to download Tor for $PLATFORM"
-    err "Please download manually from: https://www.torproject.org/download/tor/"
+    # 自定义镜像
+    if [ -n "${TOR_MIRROR:-}" ]; then
+        case "$PLATFORM" in
+            linux-x86_64)
+                urls=("${TOR_MIRROR}/tor-expert-bundle-linux-x86_64-${ver}.tar.gz" "${urls[@]}")
+                ;;
+            macos-x86_64)
+                urls=("${TOR_MIRROR}/tor-expert-bundle-macos-x86_64-${ver}.tar.gz" "${urls[@]}")
+                ;;
+            macos-aarch64)
+                urls=("${TOR_MIRROR}/tor-expert-bundle-macos-aarch64-${ver}.tar.gz" "${urls[@]}")
+                ;;
+            windows-x86_64)
+                urls=("${TOR_MIRROR}/tor-expert-bundle-windows-x86_64-${ver}.tar.gz" "${urls[@]}")
+                ;;
+        esac
+    fi
+
+    printf '%s\n' "${urls[@]}"
+}
+
+# ============================================================
+# 下载函数 (带重试 + 断点续传 + 进度)
+# ============================================================
+download_file() {
+    local url="$1"
+    local output="$2"
+    local max_retries="${3:-3}"
+    local retry=0
+
+    while [ $retry -lt $max_retries ]; do
+        retry=$((retry + 1))
+        log "  下载 ($retry/$max_retries): ${url:0:80}..."
+
+        # curl 参数:
+        #   -C - : 断点续传
+        #   --connect-timeout 10 : 连接超时10秒
+        #   --max-time 300 : 最大下载时间5分钟
+        #   --retry 2 : curl 内部重试2次
+        #   --retry-delay 3 : 重试间隔3秒
+        #   -L : 跟随重定向
+        #   -# : 显示进度条
+        if curl -C - -L \
+            --connect-timeout 10 \
+            --max-time 300 \
+            --retry 2 \
+            --retry-delay 3 \
+            -# \
+            -o "$output" \
+            "$url" 2>&1; then
+
+            # 验证文件大小 (>100KB 才算有效)
+            if [ -f "$output" ] && [ "$(stat -c%s "$output" 2>/dev/null || stat -f%z "$output" 2>/dev/null || echo 0)" -gt 102400 ]; then
+                log "  ✓ 下载成功"
+                return 0
+            else
+                warn "  文件太小，可能下载失败"
+                rm -f "$output"
+            fi
+        else
+            warn "  下载失败 (curl 退出码: $?)"
+        fi
+
+        # 重试前等待
+        if [ $retry -lt $max_retries ]; then
+            local wait=$((retry * 3))
+            log "  等待 ${wait}s 后重试..."
+            sleep $wait
+        fi
+    done
+
     return 1
 }
 
-# 交叉编译 obfs4proxy (从源码)
+# ============================================================
+# 下载 Tor
+# ============================================================
+download_tor() {
+    if [ -f "$BIN_DIR/tor" ] && [ -x "$BIN_DIR/tor" ]; then
+        log "Tor 已存在: $BIN_DIR/tor"
+        # 验证二进制是否可用
+        if "$BIN_DIR/tor" --version >/dev/null 2>&1; then
+            return 0
+        else
+            warn "Tor 二进制不可用，重新下载..."
+            rm -f "$BIN_DIR/tor"
+        fi
+    fi
+
+    log "下载 Tor ($PLATFORM)..."
+
+    for ver in $TOR_VERSIONS; do
+        local urls
+        urls=$(get_download_urls "$ver")
+        local tmpfile="/tmp/tor-${PLATFORM}-${ver}.tar.gz"
+
+        for url in $urls; do
+            log "  尝试 v${ver}: ${url:0:60}..."
+
+            if download_file "$url" "$tmpfile" 2; then
+                log "  解压中..."
+                local extdir="/tmp/tor-extract-${PLATFORM}"
+                rm -rf "$extdir" && mkdir -p "$extdir"
+
+                if tar xzf "$tmpfile" -C "$extdir" 2>/dev/null; then
+                    # 查找 tor 二进制
+                    local tor_bin=$(find "$extdir" -name "tor" -type f 2>/dev/null | head -1)
+                    [ -z "$tor_bin" ] && tor_bin=$(find "$extdir" -name "tor.exe" -type f 2>/dev/null | head -1)
+
+                    if [ -n "$tor_bin" ]; then
+                        cp "$tor_bin" "$BIN_DIR/"
+                        chmod +x "$BIN_DIR/$(basename "$tor_bin")"
+
+                        # 复制 obfs4proxy
+                        local obfs4_bin=$(find "$extdir" -name "obfs4proxy" -type f 2>/dev/null | head -1)
+                        [ -z "$obfs4_bin" ] && obfs4_bin=$(find "$extdir" -name "obfs4proxy.exe" -type f 2>/dev/null | head -1)
+                        if [ -n "$obfs4_bin" ]; then
+                            cp "$obfs4_bin" "$BIN_DIR/"
+                            chmod +x "$BIN_DIR/$(basename "$obfs4_bin")" 2>/dev/null
+                            log "  ✓ obfs4proxy 也已安装"
+                        fi
+
+                        # 复制 snowflake-client
+                        local sf_bin=$(find "$extdir" -name "snowflake-client" -type f 2>/dev/null | head -1)
+                        if [ -n "$sf_bin" ]; then
+                            cp "$sf_bin" "$BIN_DIR/"
+                            chmod +x "$BIN_DIR/$(basename "$sf_bin")" 2>/dev/null
+                            log "  ✓ snowflake-client 也已安装"
+                        fi
+
+                        # 复制 libevent (macOS 需要)
+                        local libevent=$(find "$extdir" -name "libevent*" -type f 2>/dev/null | head -1)
+                        if [ -n "$libevent" ]; then
+                            cp "$libevent" "$BIN_DIR/"
+                            log "  ✓ libevent 也已安装"
+                        fi
+
+                        # macOS: 移除 Gatekeeper 隔离标记
+                        if [ "${PLATFORM%%-*}" = "macos" ]; then
+                            for f in "$BIN_DIR"/tor "$BIN_DIR"/obfs4proxy "$BIN_DIR"/snowflake-client; do
+                                [ -f "$f" ] && xattr -d com.apple.quarantine "$f" 2>/dev/null || true
+                            done
+                            log "  ✓ macOS quarantine 标记已移除"
+                        fi
+
+                        rm -rf "$extdir" "$tmpfile"
+                        log "  ✓ Tor v${ver} 安装成功 -> $BIN_DIR/"
+                        return 0
+                    fi
+                fi
+                rm -rf "$extdir"
+            fi
+            rm -f "$tmpfile"
+        done
+    done
+
+    err "下载 Tor 失败 (所有源都不可用)"
+    echo ""
+    echo "  手动下载方法:"
+    echo "  1. 访问 https://www.torproject.org/download/tor/"
+    echo "  2. 下载 Expert Bundle (对应平台)"
+    echo "  3. 解压后将 tor/obfs4proxy 放入 $BIN_DIR/"
+    echo ""
+    echo "  或设置自定义镜像:"
+    echo "  TOR_MIRROR=https://your-mirror.com/path bash setup.sh"
+    return 1
+}
+
+# ============================================================
+# 编译 obfs4proxy (从源码)
+# ============================================================
 compile_obfs4proxy() {
     if [ -f "$BIN_DIR/obfs4proxy" ]; then
-        log "obfs4proxy already exists: $BIN_DIR/obfs4proxy"
+        log "obfs4proxy 已存在: $BIN_DIR/obfs4proxy"
         return 0
     fi
 
     # 检查 Go SDK
     local go_bin="deps/go-sdk/go/bin/go"
     if [ ! -f "$go_bin" ]; then
-        warn "Go SDK not found at deps/go-sdk/"
-        warn "obfs4proxy needs to be compiled manually"
+        warn "Go SDK 未找到 (deps/go-sdk/)"
+        warn "obfs4proxy 需要手动编译"
         return 1
     fi
 
-    log "Compiling obfs4proxy for $PLATFORM..."
+    log "编译 obfs4proxy ($PLATFORM)..."
     export GOROOT="$SCRIPT_DIR/deps/go-sdk/go"
     export PATH="$GOROOT/bin:$PATH"
     export GOPATH="$SCRIPT_DIR/deps/gopath"
@@ -160,15 +307,17 @@ compile_obfs4proxy() {
     cd "$SCRIPT_DIR"
 
     if [ -f "$BIN_DIR/obfs4proxy${output_ext}" ]; then
-        log "✓ obfs4proxy compiled for $PLATFORM"
+        log "✓ obfs4proxy 编译成功"
         return 0
     else
-        err "Failed to compile obfs4proxy"
+        err "obfs4proxy 编译失败"
         return 1
     fi
 }
 
+# ============================================================
 # macOS 专属优化
+# ============================================================
 macos_optimize() {
     if [ "${PLATFORM%%-*}" != "macos" ]; then
         return 0
@@ -208,7 +357,9 @@ macos_optimize() {
     fi
 }
 
+# ============================================================
 # 主流程
+# ============================================================
 log ""
 log "========================================="
 log "  Tor Proxy Setup - $PLATFORM"
@@ -221,16 +372,16 @@ macos_optimize
 
 # 创建平台符号链接
 log ""
-log "Creating platform symlink..."
+log "创建平台符号链接..."
 ln -sfn "$PLATFORM" "$SCRIPT_DIR/bin/current"
 
 log ""
 log "========================================="
-log "  Setup Complete!"
+log "  安装完成!"
 log "========================================="
 log ""
-log "  Platform: $PLATFORM"
+log "  平台:     $PLATFORM"
 log "  Tor:      $BIN_DIR/tor"
 [ -f "$BIN_DIR/obfs4proxy" ] && log "  obfs4proxy: $BIN_DIR/obfs4proxy"
 log ""
-log "  Run: ./tor-start.sh start"
+log "  启动: ./tor-start.sh start"

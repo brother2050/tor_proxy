@@ -42,20 +42,28 @@ BIN_DIR="$SCRIPT_DIR/bin/$PLATFORM"
 OS_TYPE="${PLATFORM%%-*}"  # linux / macos / windows
 
 # ============================================================
-# 二进制查找
+# 二进制查找 (自动修复权限)
 # ============================================================
+fix_perms() {
+    [ -f "$1" ] && [ ! -x "$1" ] && chmod +x "$1" 2>/dev/null
+}
+
 find_tor() {
-    [ -x "$BIN_DIR/tor" ] && echo "$BIN_DIR/tor" && return
-    [ -x "$SCRIPT_DIR/bin/current/tor" ] && echo "$SCRIPT_DIR/bin/current/tor" && return
-    [ -x "$SCRIPT_DIR/tor" ] && echo "$SCRIPT_DIR/tor" && return
+    # 平台目录
+    [ -f "$BIN_DIR/tor" ] && { fix_perms "$BIN_DIR/tor"; [ -x "$BIN_DIR/tor" ] && echo "$BIN_DIR/tor" && return; }
+    # current 符号链接
+    [ -f "$SCRIPT_DIR/bin/current/tor" ] && { fix_perms "$SCRIPT_DIR/bin/current/tor"; [ -x "$SCRIPT_DIR/bin/current/tor" ] && echo "$SCRIPT_DIR/bin/current/tor" && return; }
+    # 根目录
+    [ -f "$SCRIPT_DIR/tor" ] && { fix_perms "$SCRIPT_DIR/tor"; [ -x "$SCRIPT_DIR/tor" ] && echo "$SCRIPT_DIR/tor" && return; }
+    # 系统 PATH
     command -v tor 2>/dev/null && return
     echo ""
 }
 
 find_obfs4proxy() {
-    [ -x "$BIN_DIR/obfs4proxy" ] && echo "$BIN_DIR/obfs4proxy" && return
-    [ -x "$SCRIPT_DIR/bin/current/obfs4proxy" ] && echo "$SCRIPT_DIR/bin/current/obfs4proxy" && return
-    [ -x "$SCRIPT_DIR/obfs4proxy" ] && echo "$SCRIPT_DIR/obfs4proxy" && return
+    [ -f "$BIN_DIR/obfs4proxy" ] && { fix_perms "$BIN_DIR/obfs4proxy"; [ -x "$BIN_DIR/obfs4proxy" ] && echo "$BIN_DIR/obfs4proxy" && return; }
+    [ -f "$SCRIPT_DIR/bin/current/obfs4proxy" ] && { fix_perms "$SCRIPT_DIR/bin/current/obfs4proxy"; [ -x "$SCRIPT_DIR/bin/current/obfs4proxy" ] && echo "$SCRIPT_DIR/bin/current/obfs4proxy" && return; }
+    [ -f "$SCRIPT_DIR/obfs4proxy" ] && { fix_perms "$SCRIPT_DIR/obfs4proxy"; [ -x "$SCRIPT_DIR/obfs4proxy" ] && echo "$SCRIPT_DIR/obfs4proxy" && return; }
     command -v obfs4proxy 2>/dev/null && return
     echo ""
 }
@@ -139,7 +147,13 @@ check_deps() {
     local missing=0
     if [ -z "$TOR_BIN" ]; then
         err "Tor 二进制未找到 (平台: $PLATFORM)"
-        echo "  运行: ./tor-start.sh setup"
+        echo ""
+        echo "  可能原因:"
+        echo "  1. 未运行 setup.sh  -> 运行: ./tor-start.sh setup"
+        echo "  2. Git clone 不完整 -> 运行: bash setup.sh"
+        echo ""
+        echo "  平台目录: $BIN_DIR"
+        ls -la "$BIN_DIR" 2>/dev/null || echo "  (目录不存在)"
         missing=1
     fi
     if [ -z "$OBFS4PROXY" ]; then
