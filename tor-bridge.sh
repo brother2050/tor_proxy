@@ -388,7 +388,12 @@ do_auto() {
         log "✓ 最佳桥接: [$best_type] (${best_time}ms)"
         echo "  $best_bridge"
         echo ""
-        echo "已自动写入配置。重启 Tor 生效:"
+        
+        # 写入用户桥接文件
+        echo "$best_bridge" > "$USER_BRIDGES"
+        log "✓ 已写入配置: $USER_BRIDGES"
+        echo ""
+        echo "重启 Tor 生效:"
         echo "  ./tor-start.sh restart"
     else
         err "✗ 所有桥接都不可用"
