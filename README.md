@@ -19,6 +19,9 @@
 git clone https://ghfast.top/https://github.com/brother2050/tor_proxy.git
 cd tor_proxy
 
+# 验证二进制 (首次运行)
+bash setup.sh
+
 # 启动 (自动检测平台，自动选最优桥接)
 ./tor-start.sh start
 
