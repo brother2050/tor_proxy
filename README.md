@@ -1,15 +1,15 @@
 # Tor Proxy - 跨平台 Tor 代理工具包
 
-通过 **Snowflake** (WebRTC CDN 隧道) 连接 Tor 网络。**预缓存 19,888 条中继描述符，首次启动仅需 ~45 秒。**
+统一多桥接管理：**Snowflake → obfs4 → meek** 自动降级，不再各走各的。**预缓存 19,888 条中继描述符，首次启动 ~30-45 秒。**
 
 ## 支持平台
 
-| 平台 | 架构 | tor | obfs4proxy |
-|------|------|-----|-----------|
-| Linux | x86_64 | ✅ 内置 | ✅ 内置 |
-| macOS | x86_64 (Intel) | ✅ 内置 | ✅ 内置 |
-| macOS | aarch64 (M1/M2/M3) | ✅ 内置 | ✅ 内置 |
-| Windows | x86_64 | ✅ 内置 | ✅ 内置 |
+| 平台 | 架构 | tor | obfs4proxy | 优化 |
+|------|------|-----|-----------|------|
+| Linux | x86_64 | ✅ 内置 | ✅ 内置 | ✅ ulimit 优化 |
+| macOS | x86_64 (Intel) | ✅ 内置 | ✅ 内置 | ✅ quarantine 修复 + UDP 缓冲区 |
+| macOS | aarch64 (M1/M2/M3) | ✅ 内置 | ✅ 内置 | ✅ quarantine 修复 + UDP 缓冲区 |
+| Windows | x86_64 | ✅ 内置 | ✅ 内置 | PowerShell 支持 |
 
 ## 快速开始
 
@@ -19,7 +19,7 @@
 git clone https://ghfast.top/https://github.com/brother2050/tor_proxy.git
 cd tor_proxy
 
-# 启动 (自动检测平台，使用对应二进制)
+# 启动 (自动检测平台，自动选最优桥接)
 ./tor-start.sh start
 
 # 使用代理
@@ -43,12 +43,23 @@ Windows 浏览器：Firefox → 设置 → 网络 → SOCKS 代理 `127.0.0.1:90
 
 ### Linux / macOS
 ```bash
-./tor-start.sh start     # 启动
+./tor-start.sh start     # 启动 (自动选最优桥接)
 ./tor-start.sh stop      # 停止
 ./tor-start.sh restart   # 重启
 ./tor-start.sh status    # 状态
 ./tor-start.sh fresh     # 清除缓存并启动
 ./tor-start.sh refresh   # 刷新描述符缓存
+./tor-start.sh bridge    # 桥接管理
+```
+
+### 桥接管理
+```bash
+./tor-bridge.sh list              # 列出所有可用桥接
+./tor-bridge.sh test              # 测试所有桥接连通性
+./tor-bridge.sh auto              # 自动选择最快桥接
+./tor-bridge.sh add <bridge-line> # 添加自定义桥接
+./tor-bridge.sh fetch             # 从网络获取新桥接
+./tor-bridge.sh reset             # 重置为默认配置
 ```
 
 ### Windows
@@ -58,6 +69,35 @@ Windows 浏览器：Firefox → 设置 → 网络 → SOCKS 代理 `127.0.0.1:90
 .\tor-start.ps1 status    # 状态
 .\tor-start.ps1 fresh     # 清除缓存并启动
 ```
+
+## 架构改进 (v2)
+
+### 统一多桥接 (不再各走各的)
+
+之前：Snowflake、obfs4、meek 各自独立配置文件，手动切换
+现在：**一个配置文件包含所有桥接类型，Tor 自动降级**
+
+```
+config/torrc.template
+├── Snowflake (WebRTC CDN 隧道) ← 优先
+├── obfs4 (内置公共桥接)         ← 备选
+└── meek_lite (CDN 伪装)         ← 兜底
+```
+
+Tor 会按顺序尝试，第一个成功就用。无需手动干预。
+
+### macOS 专属优化
+
+- **Gatekeeper 修复**：自动移除 `com.apple.quarantine` 隔离标记
+- **DYLD_LIBRARY_PATH**：正确设置动态库路径
+- **UDP 缓冲区**：检测并提示优化 Snowflake WebRTC 所需的 UDP 缓冲区
+- **libevent 软链接**：自动处理 macOS libevent 依赖
+
+### Bootstrap 优化
+
+- **智能超时**：60 秒无进度自动重启 Tor
+- **更快的电路参数**：`CircuitBuildTimeout 20`、`MaxClientCircuitsPending 128`
+- **并行描述符获取**：`FetchDirInfoEarly 1`、`FetchDirInfoExtraEarly 1`
 
 ## 测试结果
 
@@ -71,10 +111,11 @@ Windows 浏览器：Firefox → 设置 → 网络 → SOCKS 代理 `127.0.0.1:90
 ## 工作原理
 
 ```
-你的机器                Snowflake CDN            Tor 网络
+你的机器                桥接隧道                  Tor 网络
   │                       │                       │
-  ├─ Tor ──obfs4proxy─────┼── Cloudflare ─────────┼── Tor 中继
-  │  (SOCKS5)  (WebRTC)   │  (CDN 隧道)           │  (出口)
+  ├─ Tor ──obfs4proxy─────┼── Snowflake (WebRTC) ─┼── Tor 中继
+  │  (SOCKS5)  (多协议)    ├── obfs4 (混淆)       │  (出口)
+  │                       └── meek (CDN 伪装)     │
   └─ curl/browser ────────┴───────────────────────┴── Google
 ```
 
@@ -89,40 +130,29 @@ tor-proxy/
 │   ├── windows-x86_64/         # tor.exe + obfs4proxy.exe
 │   └── current -> linux-x86_64 # 当前平台符号链接
 ├── config/
-│   └── torrc.template          # 配置模板
+│   └── torrc.template          # 统一多桥接配置模板
 ├── cache/
 │   └── descriptors/            # 预缓存描述符 (46MB, 19888 relay)
 ├── src/
 │   └── obfs4/                  # obfs4proxy 完整源码
 ├── deps/
 │   └── go-sdk/                 # Go 1.22.5 SDK (重编译用)
-├── tor-start.sh                # 启动脚本 (Linux/macOS)
+├── tor-start.sh                # 启动脚本 (Linux/macOS, 统一多桥接)
+├── tor-bridge.sh               # 桥接管理器 (list/test/auto/add)
 ├── tor-start.ps1               # 启动脚本 (Windows)
 ├── bridge-finder.py            # 桥接自动发现
 ├── tor-benchmark.py            # 速度基准测试
 ├── download-all.sh             # 一键下载所有平台 Tor
+├── setup.sh                    # 平台依赖安装 (含 macOS 优化)
 └── README.md
 ```
 
 ## 描述符缓存
 
 预缓存 19,888 条中继描述符：
-- 首次启动 ~45 秒 (使用缓存)
-- 后续重启 ~30 秒 (复用缓存)
+- 首次启动 ~30-45 秒 (使用缓存)
+- 后续重启 ~20-30 秒 (复用缓存)
 - 停止时自动保存，重启自动加载
-
-## 桥接管理
-
-```bash
-# Snowflake (推荐 - 自动发现志愿者代理)
-python3 bridge-finder.py --snowflake
-
-# 搜索所有来源
-python3 bridge-finder.py
-
-# 测试桥接
-python3 bridge-finder.py --test "obfs4 1.2.3.4:443 cert=xxx iat-mode=0"
-```
 
 ## 浏览器配置
 
@@ -150,19 +180,24 @@ git commit -m "update: Tor binaries"
 git push
 ```
 
-## 重新编译 obfs4proxy
-
-```bash
-# 当前平台
-export GOROOT="$(pwd)/deps/go-sdk/go"
-export PATH="$GOROOT/bin:$PATH"
-cd src/obfs4 && go build -o ../../bin/$(../bin/current)/obfs4proxy ./cmd/lyrebird/
-```
-
 ## 故障排除
 
 ```bash
-./tor-start.sh status    # 查看平台和状态
-tail -f logs/tor.log     # 查看日志
-./tor-start.sh fresh     # 清除缓存重来
+./tor-start.sh status        # 查看平台和状态
+./tor-bridge.sh test         # 测试桥接连通性
+./tor-bridge.sh auto         # 自动选择最快桥接
+tail -f logs/tor.log         # 查看日志
+./tor-start.sh fresh         # 清除缓存重来
+```
+
+### macOS 特别提示
+
+如果 Snowflake 连接慢 (卡在 10%)，尝试：
+```bash
+# 增大 UDP 缓冲区
+sudo sysctl -w net.inet.udp.recvspace=524288
+sudo sysctl -w net.inet.udp.maxdgram=524288
+
+# 或切换到 obfs4 (更快)
+./tor-bridge.sh auto
 ```

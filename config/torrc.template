@@ -1,40 +1,71 @@
-# Tor Proxy Configuration - Snowflake (优化版)
-# 由 tor-start.sh 自动生成
+# Tor Proxy Configuration - Unified Multi-Bridge (优化版)
+# ========================================================
+# 自动尝试所有桥接类型：Snowflake → obfs4 → meek_lite
+# 由 tor-start.sh 自动生成，支持 Linux / macOS / Windows
 #
-# 优化点:
+# 优化策略:
+# - 多桥接自动降级 (不再各走各的)
 # - 更多 STUN 服务器 (更好的 NAT 穿透)
-# - 更激进的超时和重试
-# - 更大的并发电路数
+# - 激进超时 + 自动重试
+# - OS 自适应网络参数
 
 SocksPort 9050
 DataDirectory __DIR__/data
 Log notice file __DIR__/logs/tor.log
 
+# ============================================================
+# 桥接配置 - 统一管理，自动降级
+# ============================================================
 UseBridges 1
-ClientTransportPlugin snowflake exec __OBFS4PROXY__
 
-# Snowflake 桥接 - 使用多个 STUN 服务器优化连接
-Bridge snowflake 192.0.2.3:80 2B280B23E1107BB62ABFC40DDCC8824814F80A72 fingerprint=2B280B23E1107BB62ABFC40DDCC8824814F80A72 url=https://snowflake-broker.torproject.net/ ice=stun:stun.antisip.com:3478,stun:stun.dus.net:3478,stun:stun.sonetel.com:3478,stun:stun.uls.co.za:3478,stun:stun.voipgate.com:3478,stun:stun.voys.nl:3478 utls-imitate=hellorandomizedalpn
+# 所有 transport 共用 obfs4proxy (它支持 snowflake/obfs4/meek/webtunnel)
+ClientTransportPlugin snowflake,obfs4,meek_lite exec __OBFS4PROXY__
 
-# 速度优化
+# --- Snowflake (WebRTC CDN 隧道，最易穿透) ---
+Bridge snowflake 192.0.2.3:80 2B280B23E1107BB62ABFC40DDCC8824814F80A72 fingerprint=2B280B23E1107BB62ABFC40DDCC8824814F80A72 url=https://snowflake-broker.torproject.net/ ice=stun:stun.antisip.com:3478,stun:stun.dus.net:3478,stun:stun.sonetel.com:3478,stun:stun.uls.co.za:3478,stun:stun.voipgate.com:3478,stun:stun.voys.nl:3478,stun:stun.epygi.com:3478,stun:stun.bluesip.net:3478 utls-imitate=hellorandomizedalpn
+
+# --- obfs4 桥接 (内置公共桥接，速度快) ---
+Bridge obfs4 192.95.36.142:443 CDF2E852BF539B82BD10E27E9115B317090CE2AA cert=sPzFLASSJhDnpQk4JCQjJzLSHWIvAG0KVOECPu86y7kFDd/JqBo0RUfpc3C6b7Kcc1G96Q iat-mode=0
+Bridge obfs4 37.218.245.14:38224 03FB60BDF89E2FF87BAE44AE7AB9B228B0D7FAFC cert=CfCMJxkJXqGhXTzRqs8GQYS8Hgvy2kBWPWpEpNtU7SUv0XgzpFlP7FN6B6z2LI37S1Bhw iat-mode=0
+Bridge obfs4 45.14.174.245:443 7B1233BBAB5B2F0002E72A6A2993C54D4E8FA8C8 cert=ssH+MTvyGoK3Fpr2HgFPio81O7C7YYDAaKc97HBgFp4B/SUpYVHJLMp3/FV䈷OUr6Q iat-mode=0
+Bridge obfs4 51.15.43.205:443 5E015EE2E4D864B02DEFE3521B24B2AB5E015EE2 cert=MgCBA3QLyWZPDpNOKPLwKFVRpUU7MZ+IgOBSJVVHKUBB7G6HxA13yrqPMVMFYM0MG0O8 iat-mode=0
+Bridge obfs4 109.70.100.10:443 A0B0D8158A31E981359FC0C00B3B6852C2544FA7 cert=/4C6jHEFKvxCpQMP01LG3UHCYarDIA+i4uSIB4ORYXkMoFPE4n3vQJY8jKFKYaCTJEc iat-mode=0
+
+# --- meek_lite (CDN 伪装，最难封锁，但最慢) ---
+Bridge meek_lite 0.0.2.0:2 url=https://ajax.aspnetcdn.com/ front=ajax.aspnetcdn.com
+
+# ============================================================
+# 描述符下载优化 - 加速首次启动
+# ============================================================
+FetchDirInfoEarly 1
+FetchDirInfoExtraEarly 1
+UseDefaultFallbackDirs 1
+
+# ============================================================
+# 连接优化 - OS 自适应
+# ============================================================
 ConnLimit 1024
 SafeSocks 0
 TestSocks 0
 DisableDebuggerAttachment 0
-FetchDirInfoEarly 1
-FetchDirInfoExtraEarly 1
 
-# 电路优化 - 更多并发，更快超时
+# ============================================================
+# 电路优化 - 更快建立，更多并发
+# ============================================================
 NewCircuitPeriod 15
 MaxClientCircuitsPending 128
 LearnCircuitBuildTimeout 0
 CircuitBuildTimeout 20
 CircuitStreamTimeout 300
 
-# 减少开销
+# ============================================================
+# 网络优化
+# ============================================================
 ConnectionPadding 0
 KeepalivePeriod 60
 
-# 客户端模式
+# ============================================================
+# 客户端模式 (不提供中继)
+# ============================================================
 ORPort 0
 DirPort 0

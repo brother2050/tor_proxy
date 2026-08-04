@@ -1,6 +1,10 @@
 #!/bin/bash
-# connect-bridge.sh - 通过桥接连接 Tor
-# =====================================
+# connect-bridge.sh - 通过桥接连接 Tor (已废弃，请使用 tor-bridge.sh)
+# ==================================================================
+# 此脚本保留向后兼容，推荐使用:
+#   ./tor-bridge.sh add <bridge-line>   # 添加桥接
+#   ./tor-start.sh start                # 启动
+#
 # 用法: ./connect-bridge.sh <bridge-line>
 # 示例: ./connect-bridge.sh "obfs4 1.2.3.4:12345 cert=xxx iat-mode=0"
 

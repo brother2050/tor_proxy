@@ -9,10 +9,11 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
 log() { echo -e "${GREEN}[setup]${NC} $*"; }
 warn() { echo -e "${YELLOW}[setup]${NC} $*"; }
 err() { echo -e "${RED}[setup]${NC} $*"; }
+info() { echo -e "${CYAN}[setup]${NC} $*"; }
 
 # 检测平台
 detect_platform() {
@@ -101,6 +102,14 @@ download_tor() {
                         log "  ✓ snowflake-client also found"
                     fi
 
+                    # macOS: 移除 Gatekeeper 隔离标记 (否则二进制可能被阻止运行)
+                    if [ "${PLATFORM%%-*}" = "macos" ]; then
+                        xattr -d com.apple.quarantine "$BIN_DIR/tor" 2>/dev/null || true
+                        [ -f "$BIN_DIR/obfs4proxy" ] && xattr -d com.apple.quarantine "$BIN_DIR/obfs4proxy" 2>/dev/null || true
+                        [ -f "$BIN_DIR/snowflake-client" ] && xattr -d com.apple.quarantine "$BIN_DIR/snowflake-client" 2>/dev/null || true
+                        log "  ✓ macOS quarantine 标记已移除"
+                    fi
+
                     rm -rf "$extdir" "$tmpfile"
                     log "  ✓ Tor v${ver} installed to $BIN_DIR/tor"
                     return 0
@@ -159,6 +168,46 @@ compile_obfs4proxy() {
     fi
 }
 
+# macOS 专属优化
+macos_optimize() {
+    if [ "${PLATFORM%%-*}" != "macos" ]; then
+        return 0
+    fi
+
+    log ""
+    log "macOS 优化检查..."
+
+    # 1. 移除所有二进制的 quarantine 标记
+    for bin in "$BIN_DIR/tor" "$BIN_DIR/obfs4proxy" "$BIN_DIR/snowflake-client"; do
+        if [ -f "$bin" ]; then
+            xattr -d com.apple.quarantine "$bin" 2>/dev/null && \
+                log "  ✓ 移除 quarantine: $(basename "$bin")" || true
+        fi
+    done
+
+    # 2. 检查 UDP 缓冲区 (Snowflake WebRTC 需要)
+    if command -v sysctl &>/dev/null; then
+        local current_buf=$(sysctl -n net.inet.udp.recvspace 2>/dev/null || echo 0)
+        if [ "$current_buf" -lt 524288 ] 2>/dev/null; then
+            warn "  macOS UDP 缓冲区较小 ($current_buf bytes)"
+            warn "  Snowflake 可能连接慢，建议执行:"
+            warn "    sudo sysctl -w net.inet.udp.recvspace=524288"
+            warn "    sudo sysctl -w net.inet.udp.maxdgram=524288"
+        else
+            log "  ✓ UDP 缓冲区: $current_buf bytes"
+        fi
+    fi
+
+    # 3. 检查 SIP 限制
+    if command -v csrutil &>/dev/null; then
+        local sip_status=$(csrutil status 2>/dev/null | grep -o 'enabled\|disabled' || echo "unknown")
+        if [ "$sip_status" = "enabled" ]; then
+            info "  SIP 已启用 (正常) - DYLD_LIBRARY_PATH 可能受限"
+            info "  确保 libevent 和 tor 在同一目录: $BIN_DIR"
+        fi
+    fi
+}
+
 # 主流程
 log ""
 log "========================================="
@@ -168,6 +217,7 @@ log ""
 
 download_tor
 compile_obfs4proxy
+macos_optimize
 
 # 创建平台符号链接
 log ""
