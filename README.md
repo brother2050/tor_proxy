@@ -102,11 +102,11 @@ Tor 会按顺序尝试，第一个成功就用。无需手动干预。
 ## 测试结果
 
 ```
-  ✓ Google          1.7s   HTTP 200
-  ✓ Wikipedia       3.0s   HTTP 200
-  ✓ GitHub          3.9s   HTTP 200
-  ✓ DuckDuckGo      2.0s   HTTP 200
-  Bootstrap:        28-31s (使用缓存)
+  ✓ Google          10s    HTTP 200
+  ✓ Wikipedia       1.3s   HTTP 301
+  ✓ GitHub          30s    HTTP 200
+  Bootstrap:        17-31s (使用缓存)
+  出口 IP:          185.220.101.17
 ```
 
 ## 工作原理

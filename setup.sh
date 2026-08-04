@@ -124,26 +124,34 @@ get_download_urls() {
 }
 
 # ============================================================
-# 下载函数 (带重试 + 断点续传 + 进度)
+# 下载函数 (多线程加速 + 断点续传 + 重试)
 # ============================================================
 download_file() {
     local url="$1"
     local output="$2"
     local max_retries="${3:-3}"
+    local threads="${4:-8}"
     local retry=0
 
+    # 优先使用 Python 多线程下载器
+    local axel="$SCRIPT_DIR/download-axel.py"
+    if [ -f "$axel" ] && command -v python3 &>/dev/null; then
+        log "  使用多线程下载 ($threads 线程)..."
+        if python3 "$axel" "$url" "$output" "$threads" 2>&1; then
+            # 验证文件
+            local fsize=$(stat -c%s "$output" 2>/dev/null || stat -f%z "$output" 2>/dev/null || echo 0)
+            if [ "$fsize" -gt 1024 ] 2>/dev/null; then
+                return 0
+            fi
+        fi
+        warn "  多线程下载失败，回退到 curl..."
+    fi
+
+    # 回退: curl 单线程下载
     while [ $retry -lt $max_retries ]; do
         retry=$((retry + 1))
-        log "  下载 ($retry/$max_retries): ${url:0:80}..."
+        log "  curl 下载 ($retry/$max_retries): ${url:0:60}..."
 
-        # curl 参数:
-        #   -C - : 断点续传
-        #   --connect-timeout 10 : 连接超时10秒
-        #   --max-time 300 : 最大下载时间5分钟
-        #   --retry 2 : curl 内部重试2次
-        #   --retry-delay 3 : 重试间隔3秒
-        #   -L : 跟随重定向
-        #   -# : 显示进度条
         if curl -C - -L \
             --connect-timeout 10 \
             --max-time 300 \
@@ -153,23 +161,20 @@ download_file() {
             -o "$output" \
             "$url" 2>&1; then
 
-            # 验证文件大小 (>100KB 才算有效)
-            if [ -f "$output" ] && [ "$(stat -c%s "$output" 2>/dev/null || stat -f%z "$output" 2>/dev/null || echo 0)" -gt 102400 ]; then
+            local fsize=$(stat -c%s "$output" 2>/dev/null || stat -f%z "$output" 2>/dev/null || echo 0)
+            if [ "$fsize" -gt 1024 ] 2>/dev/null; then
                 log "  ✓ 下载成功"
                 return 0
             else
-                warn "  文件太小，可能下载失败"
+                warn "  文件太小 (${fsize}B)"
                 rm -f "$output"
             fi
         else
-            warn "  下载失败 (curl 退出码: $?)"
+            warn "  curl 失败 (退出码: $?)"
         fi
 
-        # 重试前等待
         if [ $retry -lt $max_retries ]; then
-            local wait=$((retry * 3))
-            log "  等待 ${wait}s 后重试..."
-            sleep $wait
+            sleep $((retry * 3))
         fi
     done
 
