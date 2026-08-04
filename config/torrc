@@ -32,9 +32,11 @@ Bridge obfs4 51.15.43.205:443 5E015EE2E4D864B02DEFE3521B24B2AB5E015EE2 cert=MgCB
 Bridge obfs4 109.70.100.10:443 A0B0D8158A31E981359FC0C00B3B6852C2544FA7 cert=/4C6jHEFKvxCpQMP01LG3UHCYarDIA+i4uSIB4ORYXkMoFPE4n3vQJY8jKFKYaCTJEc iat-mode=0
 
 # --- meek_lite (CDN 伪装，最难封锁，但最慢) ---
-# 注意: meek 需要最新的 obfs4proxy 版本，旧版可能返回 301 错误
-# 如遇问题，可通过 tor-bridge.sh add 手动添加或更新
-Bridge meek_lite 0.0.2.0:2 url=https://ajax.aspnetcdn.com/ front=ajax.aspnetcdn.com
+# 注意: meek 在某些 obfs4proxy 版本中可能返回 301 错误
+# 如需使用 meek，可通过 tor-bridge.sh add 手动添加:
+#   ./tor-bridge.sh add 'meek_lite 0.0.2.0:2 url=https://ajax.aspnetcdn.com/ front=ajax.aspnetcdn.com'
+# 或使用 Azure CDN:
+#   ./tor-bridge.sh add 'meek_lite 0.0.2.0:2 url=https://ajax.aspnetcdn.com/ front=ajax.aspnetcdn.com'
 
 # ============================================================
 # 描述符下载优化 - 加速首次启动

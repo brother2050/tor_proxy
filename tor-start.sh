@@ -360,14 +360,15 @@ do_stop() {
     if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
         log "停止 Tor (PID: $pid)..."
         sync_to_cache
-        kill "$pid" 2>/dev/null
+        kill "$pid" 2>/dev/null || true
         sleep 2
-        kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null
+        kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null || true
         log "已停止"
     else
         warn "未在运行"
     fi
     rm -f "$PID_FILE"
+    return 0
 }
 
 do_restart() { do_stop; sleep 2; do_start; }
