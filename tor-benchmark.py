@@ -66,7 +66,7 @@ def http_get(url, timeout=TIMEOUT):
         sock = ctx.wrap_socket(sock, server_hostname=host)
 
     # HTTP request
-    req = f"GET {path} HTTP/1.1\r\nHost: {host}\rConnection: close\r\nUser-Agent: Mozilla/5.0\r\n\r\n"
+    req = f"GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\nUser-Agent: Mozilla/5.0\r\n\r\n"
     sock.send(req.encode())
 
     # Read response
